@@ -1,0 +1,1244 @@
+---
+title: "Capstone Project - Cross sell and Up sell of Product"
+author: "Rahul Saha - EISIN171819"
+date: "31 December 2018"
+output:
+  html_document: default
+  rmarkdown::html_vignette: default
+vignette: |
+  %\VignetteIndexEntry{Vignette Title} %\VignetteEngine{knitr::rmarkdown} %\VignetteEncoding{UTF-8}
+---
+
+
+
+#### We are going to explore the data that are generated through internal and external source for the project. Building such a pipeline is an important and critical process to perform Analytics. Here, we shall use Unsupervised Learning Technique - K Means primary to perform some supervised clusters. We are going to build multiple cluster and check for the product that are currently consumed and based on that we shall recommend other products to the customer.
+
+
+## Mock Data Preparation
+```{r}
+library(readxl)
+```
+
+```{r}
+#Input Data from excel with lookup table
+lookupTable <- read_excel("C:\\Users\\rahul\\Downloads\\Codeathon Next OneDrive_1_08-12-2018\\LookupTable.xlsx")
+```
+
+
+```{r}
+#Locally assign lookup values 
+Gender_ls <- lookupTable$Gender
+Marital_Status_ls <- lookupTable$'Marital Status'
+Locality_Type_ls <- lookupTable$`Locality Type`
+State_ls = lookupTable$State
+Education_ls = lookupTable$Education
+Profession_ls = lookupTable$Profession
+Organisation_ls = lookupTable$Organisation
+Employment_Status_ls = lookupTable$'Employment Status'
+Smoking_ls = lookupTable$Smoking
+Health_Condition_ls = lookupTable$'Health Condition'
+Purchase_Channel_ls = lookupTable$'Purchase Channel'
+```
+
+
+```{r}
+#Removing NA values
+Gender_ls = Gender_ls[is.na(Gender_ls)==FALSE]
+Marital_Status_ls = Marital_Status_ls[is.na(Marital_Status_ls)==FALSE]
+Locality_Type_ls = Locality_Type_ls[is.na(Locality_Type_ls)==FALSE]
+State_ls = State_ls[is.na(State_ls)==FALSE]
+Education_ls = Education_ls[is.na(Education_ls)==FALSE]
+Profession_ls = Profession_ls[is.na(Profession_ls)==FALSE]
+Organisation_ls = Organisation_ls[is.na(Organisation_ls)==FALSE]
+Employment_Status_ls = Employment_Status_ls[is.na(Employment_Status_ls)==FALSE]
+Smoking_ls = Smoking_ls[is.na(Smoking_ls)==FALSE]
+Health_Condition_ls = Health_Condition_ls[is.na(Health_Condition_ls)==FALSE]
+Purchase_Channel_ls = Purchase_Channel_ls[is.na(Purchase_Channel_ls)==FALSE]
+
+```
+
+
+```{r}
+#Package to generate positive random normals
+library(truncnorm)
+
+
+df <- data.frame(ds.Gender_ls = sample(Gender_ls,5000,replace = T),
+                 ds.Marital_Status_ls = sample(Marital_Status_ls,5000,replace = T,prob = c(0.7,0.2,0.1)),
+                 ds.Locality_Type_ls = sample(Locality_Type_ls,5000,replace = T),
+                 ds.State_ls = sample(State_ls,5000,replace = T),
+                 ds.Education_ls = sample(Education_ls,5000,replace = T,prob = c(0.3,0.4,0.2,0.1)),
+                 ds.Primary_Purchase_Channel_ls = sample(Purchase_Channel_ls,5000,replace = T,prob = c(0.3,0.3,0.2,0.2)))
+df =  cbind(df,
+            ds.Organisation_ls = sample(Organisation_ls,5000,replace = T,prob = c(0.2,0.14,0.15,0.12,0.15,0.01,0.08,0.1,0.05)),
+            ds.Employment_Status_ls = sample(Employment_Status_ls,5000,replace = T, prob = c(0.05,0.6,0.15,0.2)),
+            ds.Health_Condition_ls = sample(Health_Condition_ls,5000,replace = T, prob = c(0.25,0.3,0.45)),
+            ds.Secondary_Purchase_Channel_ls = sample(Purchase_Channel_ls,5000,replace = T, prob = c(0.3,0.3,0.2,0.2)))
+
+
+df$ds.Profession_ls = ifelse(df$ds.Employment_Status_ls == "Retired","Retired","NA")
+
+
+df$ds.Profession_ls[df$ds.Profession_ls=="NA"] = sample(Profession_ls,4061,replace = T,prob = c(0.01,0.1,0.05,0.09,0.15,0.1,0.05,0.05,0.05,0.08,0.02,0.00,0.1,0.15))
+
+
+df$ds.age = ifelse(df$ds.Employment_Status_ls == "Retired",round(rtruncnorm(939,a=40, b=85, mean=55, sd=5),0),
+                   ifelse(df$ds.Profession_ls == "Student",round(rtruncnorm(38 ,a=20, b=45, mean=28, sd=5),0),
+                          round(rtruncnorm(4023 ,a=23, b=70, mean=45, sd=5),0)))
+
+df$ds.Parents = ifelse(df$ds.Employment_Status_ls == "Retired",round(rtruncnorm(939,a=0, b=1, mean=0, sd=1),0),
+                       ifelse(df$ds.Profession_ls == "Student",round(rtruncnorm(38 ,a=1, b=2, mean=2, sd=1),0),
+                              round(rtruncnorm(4023 ,a=1, b=2, mean=1.25, sd=1),0)))
+
+df$ds.family.size = ifelse(df$ds.age >= 20 & df$ds.age < 30, sample(c(3,4,5),replace=T,prob = c(0.2,0.6,0.2)),
+                           ifelse(df$ds.age >= 30 & df$ds.age < 40, sample(c(4,5,6),replace=T,prob = c(0.1,0.7,0.2)),
+                                  sample(c(3,4,5),replace=T,prob = c(0.1,0.6,0.3))))
+
+df$ds.Children <- ifelse(df$ds.age >= 20 & df$ds.age < 30, sample(c(0,1,2),replace=T,prob = c(0.2,0.45,0.35)),
+                      ifelse(df$ds.age >= 30 & df$ds.age < 40, sample(c(0,1,2),replace=T,prob = c(0.1,0.6,0.3)),
+                             sample(c(2,3,4),replace=T,prob = c(0.5,0.35,0.15))))
+
+df$ds.Avg.Family.Age <- ifelse(df$ds.age >= 20 & df$ds.age < 30 & df$ds.Children > 2,rtruncnorm(5000,a=30, b=40, mean=35,sd=3),ifelse(df$ds.age >= 30 & df$ds.age < 45 & df$ds.Children > 1, rtruncnorm(5000,a=30, b=50, mean=40, sd=3),
+                      rtruncnorm(5000,a=40, b=60, mean=50, sd=3)))
+
+df$ds.Annual.income = round(rtruncnorm(n=5000, a=20000, b=185000, mean=50000, sd=10000),0)
+df$ds.Avg.annual.inc = round(rtruncnorm(n=5000, a=20000, b=185000, mean=50000, sd=10000),0)
+df$ds.Annual.Expenses  = df$ds.Annual.income - round(rtruncnorm(n=5000, a=10000, b=105000, mean=35000, sd=7000),0)
+
+df$ds.Saving.Amount = df$ds.Annual.income - df$ds.Annual.Expenses
+df$ds.Credit.Cards = round(rtruncnorm(n=5000, a=0, b=15, mean=4, sd=1),0)
+df$ds.Two.Wheelers = round(rtruncnorm(n=5000, a=0, b=4, mean=2, sd=1),0)
+df$ds.Four.Wheelers = round(rtruncnorm(n=5000, a=0, b=2, mean=0, sd=0.5),0)
+df$ds.Bank.Accounts = round(rtruncnorm(n=5000, a=1, b=6, mean=3, sd=1),0)
+df$ds.Houses = round(rtruncnorm(n=5000, a=1, b=4, mean=1, sd=1),0)
+df$ds.Estates  = round(rtruncnorm(n=5000, a=1, b=3, mean=1, sd=0.5),0)
+
+df$ds.Yearly.Travel.Dist.Air = ifelse(round(rtruncnorm(n=5000, a=5000, b=50000, mean=15000, sd=1000),0)<0,round(rtruncnorm(n=5000, a=5000, b=50000, mean=15000, sd=1000),0)*-1,round(rtruncnorm(n=5000, a=5000, b=50000, mean=15000, sd=1000),0))
+
+df$ds.Yearly.Travel.Dist.Road = ifelse(round(rtruncnorm(n=5000, a=20000, b=80000, mean=50000, sd=10000),0)<0,round(rtruncnorm(n=5000, a=20000, b=80000, mean=50000, sd=10000),0)*-1,round(rtruncnorm(n=5000, a=20000, b=80000, mean=50000, sd=10000),0))
+
+df$ds.Policy.Face.Value = round(rtruncnorm(n=5000, a=200000, b=2550000, mean=100000, sd=20000),0)
+
+df$ds.Claimed.Amount = df$ds.Policy.Face.Value*sample(c(0,0.2,0.5,0.8,1),replace=T,prob = c(0.55,0.15,0.15,0.1,0.05))
+
+df$ds.Yearly.Premium = df$ds.Annual.Expenses * round(rtruncnorm(n=5000, a=5, b=20, mean=10, sd=2),0)/100
+
+df$ds.YearOfPurchase.1st_Prod = sample(c(2000:2009), 5000, replace = TRUE)
+
+df$ds.YearOfPurchase.LastProd = df$ds.YearOfPurchase.1st_Prod + sample(0:8, 5000, replace = TRUE)
+
+#Children Plan
+df$ds.prod1 = ifelse(df$ds.Children == 0, sample(0:1,replace=T,prob = c(0.9,0.1)),sample(0:1,replace=T,prob = c(0.1,0.9)))
+
+#Senior Citizen Plan
+df$ds.prod2 = ifelse(df$ds.age < 60, sample(0:1,replace=T,prob = c(0.9,0.1)),sample(0:1,replace=T,prob = c(0.2,0.8)))
+
+#Car Insurance Plan
+df$ds.prod3 = ifelse(df$ds.Four.Wheelers > 0, sample(0:1,replace=T,prob = c(0,0.9)),sample(0:1,replace=T,prob = c(1,0)))
+
+#Bike Insurance Plan
+df$ds.prod4 = ifelse(df$ds.Two.Wheelers > 0, sample(0:1,replace=T,prob = c(0,0.9)),sample(0:1,replace=T,prob = c(1,0)))
+
+#Professional Insurance Plan
+df$ds.prod5 = ifelse(df$ds.Profession_ls == "Student", sample(0:1,replace=T,prob = c(1,0)),sample(0:1,replace=T,prob = c(0.15,0.85)))
+
+#Farmer Insurance Plan
+df$ds.prod6 = ifelse(df$ds.Profession_ls == "Farmer", sample(0:1,replace=T,prob = c(1,0)),sample(0:1,replace=T,prob = c(0.15,0.85)))
+
+#High Income Insurance Plan
+df$ds.prod7 = ifelse(df$ds.Annual.income <= 50000, sample(0:1,replace=T,prob = c(0.8,0.2)),sample(0:1,replace=T,prob = c(0.2,0.8)))
+
+#Estate Insurance Plan
+df$ds.prod8 = ifelse(df$ds.Estates < 2, sample(0:1,replace=T,prob = c(0.95,0.15)),sample(0:1,replace=T,prob = c(0.15,0.95)))
+
+#Health Insurance Plan
+df$ds.prod9 = ifelse(df$ds.Health_Condition_ls == "Below Avg", sample(0:1,replace=T,prob = c(0.2,0.8)),sample(0:1,replace=T,prob = c(0.1,0.9)))
+
+#Retirement Plan
+df$ds.prod10 = sample(0:1,5000,replace = TRUE,prob = c(0.10,0.90))
+
+#write.csv(df, file = "C:\\Users\\rahul\\Downloads\\Codeathon Next OneDrive_1_08-12-2018\\codeathon_input1.csv")
+
+```
+
+
+
+## Drawing Analytics 
+
+### Step 1 - File/Data Input:
+
+### 1 a. Reading data from csv file: 
+```{r inputdata}
+inputdf <- read.csv("C:\\Users\\rahul\\Downloads\\Codeathon Next OneDrive_1_08-12-2018\\codeathon_input1.csv")
+str(inputdf)
+# We shall ignore repetative column for Purchase_Channel 
+```
+
+#### Summary: 
+##### Data comprises of both categorical, discrite and numeric type
+```{r}
+summary(inputdf)
+```
+## Step 2 - Exploratory Analysis:
+
+### 2 a) Loading library
+```{r}
+
+library(ggplot2) #For Graphical Visualization
+library(forcats) #For ordering bar cart, based on the frequency distribution
+```
+### 2 b) Initial Visualization
+#### Gender:
+##### Customers are almost equally divided between Gender.
+```{r}
+a <- ggplot(inputdf, aes(x = ds.Gender_ls))
+a +  geom_bar(aes(fill = ds.Gender_ls), width=0.7, alpha=0.8) + labs(x = "Gender") +
+  theme_minimal()
+```
+
+#### Marital_Status:
+##### As per normal customer behaviour, married are more compared to single and divorce. Since, here the product is Insurance Product and majority customer are married, and customer are more careful to secure family's economy condition.
+```{r}
+a <- ggplot(inputdf, aes(x = fct_rev(fct_infreq(ds.Marital_Status_ls))))
+a +  geom_bar(fill="steelblue", width=0.7, alpha=0.8)+ labs(x = "Marital Status", subtitle = "Customer share based on Marital Status") +
+  theme_minimal()
+```
+
+#### States:
+##### Customers are present across all the US states. Some states are having more customers compare to other states. Massachusetts is having maximum customer, does this city population is more compare to other? Does the channel partners are more active? We can answer more such insight. But here we are focusing on our scope to recommend some product to certain group. 
+```{r}
+a <- ggplot(inputdf, aes(x = fct_rev(fct_infreq(ds.State_ls))))
+a +  geom_bar(fill="steelblue",width=0.7) + labs(x = "States") + coord_flip() + 
+  theme_minimal() + theme(legend.position="none")
+
+```
+
+#### Education:
+##### It shows general trend that limited people go for higher eduction. So do customer based for an Insurance Product.
+
+```{r}
+a <- ggplot(inputdf, aes(x = fct_rev(fct_infreq(ds.Education_ls))))
+a +  geom_bar(fill="steelblue", alpha=0.8,width=0.7) + labs(x = "Education") +
+  theme_minimal()
+```
+
+#### Primary Purchase Channel:
+##### Show which particular purchase channel is more active and customer are preferring.
+
+```{r}
+a <- ggplot(inputdf, aes(x = fct_rev(fct_infreq(ds.Primary_Purchase_Channel_ls))))
+a +  geom_bar(fill="steelblue", alpha=0.8,width=0.7) + labs(x = "Primary Purchase Channel") +
+  theme_minimal()
+```
+
+#### Organisation: 
+##### Show which selector is having more customer share.
+
+```{r}
+library(gridExtra)
+rotatedAxisElementText = function(angle,position='x'){
+  angle     = angle[1]; 
+  position  = position[1]
+  positions = list(x=0,y=90,top=180,right=270)
+  if(!position %in% names(positions))
+    stop(sprintf("'position' must be one of [%s]",paste(names(positions),collapse=", ")),call.=FALSE)
+  if(!is.numeric(angle))
+    stop("'angle' must be numeric",call.=FALSE)
+  rads  = (angle - positions[[ position ]])*pi/180
+  hjust = 0.3*(4 - sin(rads))
+  vjust = 0.3*(3.5 + cos(rads))
+  element_text(angle=angle,vjust=vjust,hjust=hjust)
+}
+a <- ggplot(inputdf, aes(x = fct_rev(fct_infreq(ds.Organisation_ls))))
+a +  geom_bar(fill="steelblue", alpha=0.8,width=0.7) + labs(x= "Sector/Organisation") +
+  theme_minimal() + theme(axis.text.x = rotatedAxisElementText(45,'x'))
+```
+ 
+#### Employment Status:
+##### On what stage, do the customer maintain an insurance product. Better to push a product to employee with Active status.
+
+```{r}
+a <- ggplot(inputdf, aes(x = fct_rev(fct_infreq(ds.Employment_Status_ls))))
+a +  geom_bar(fill="steelblue", alpha=0.8,width=0.7) + labs(x= "Employment Status") +
+  theme_minimal()
+```
+
+#### Health Condition:
+##### On what Health condition, do the customer maintain an insurance product. With more Average and Above Average health condition, Insurance company suppose to be in profitable condition.
+
+```{r}
+a <- ggplot(inputdf, aes(x = fct_rev(fct_infreq(ds.Health_Condition_ls))))
+a +  geom_bar(fill="steelblue", alpha=0.8,width=0.7) + labs(x= "Health Condition") +
+  theme_minimal()
+```
+
+#### Secondary Purchase Channel:
+##### Show which particular purchase channel is more active and customer are preferring.
+
+```{r}
+a <- ggplot(inputdf, aes(x = fct_rev(fct_infreq(ds.Secondary_Purchase_Channel_ls))))
+a +  geom_bar(fill="steelblue", alpha=0.8,width=0.7) + labs(x = "Secondary Purchase Channel") +
+  theme_minimal()
+```
+
+#### Profession:
+##### Stats for the company about their customers and their professions.
+
+```{r}
+a <- ggplot(inputdf, aes(x = fct_rev(fct_infreq(ds.Profession_ls))))
+a +  geom_bar(fill="steelblue", alpha=0.8,width=0.7) + labs(x= "Profession") +
+  theme_minimal() + theme(axis.text.x = rotatedAxisElementText(45,'x'))
+
+# Don't get confused with the Retired bar, prior profession before retirement are not consider.
+```
+
+#### Lets check for the products if having any direct connection with the categorical values.
+
+```{r}
+# Loading library tidyr, to convert the wide-table to long-table.
+library(tidyr)
+```
+
+```{r}
+# Only selecting categorical fields and the products
+prod.widetable <- inputdf[,c(1:10,12,35:44)]
+
+# Converting to convert the wide-table to long-table 
+prod.longtable <- gather(prod.widetable, condition, measurement, ds.prod1:ds.prod10, factor_key=TRUE)
+
+str(prod.longtable)
+```
+
+
+#### We don't see much difference in proportion based on the below category
+```{r}
+prop.table(ftable(prod.longtable[,2],prod.longtable$measurement, prod.longtable$condition))*100
+```
+
+#### We don't see much difference in proportion based on the below category
+```{r}
+prop.table(ftable(prod.longtable[,3],prod.longtable$measurement, prod.longtable$condition))*100
+```
+
+#### Bayesian network Algorithm to see if Products is having any dependency
+```{r}
+library(bnlearn)
+
+```
+#### Score-based Learning Algorithms
+
+##### Hill-Climbing (hc): a hill climbing greedy search on the space of the directed graphs. The optimized implementation uses score caching, score decomposability and score equivalence to reduce the number of duplicated tests
+```{r}
+bn_df <- data.frame(prod.longtable[,2:11], product = prod.longtable[,12],product_select = as.factor(prod.longtable$measurement))
+res <- hc(bn_df)
+plot(res)
+```
+
+### 2 c) Initial Visualization and Normality test for continous variables
+    
+```{r}
+library(nortest)
+```
+
+#### Normality test for "ds.age": Fail Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}
+ad.test(inputdf[,13])
+cvm.test(inputdf[,13])
+pearson.test(inputdf[,13])
+```
+
++ Density Plot: Looks like close to Normal Distribution but not a perfect one
+```{r}
+a <- ggplot(inputdf, aes(x = ds.age))
+a +  geom_density(fill="steelblue", alpha=0.8) + theme_minimal()
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,13],y=1:5000)
+```
+
+#### Normality test for "ds.Parents" : Fail Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}
+ad.test(inputdf[,14])
+cvm.test(inputdf[,14])
+pearson.test(inputdf[,14])
+```
+
++ Bar/Density Plot:
+```{r}
+a <- ggplot(inputdf, aes(x = ds.Parents))
+a +  geom_bar(fill="steelblue",  width = 0.7, alpha=0.8) + theme_minimal()
+```
+
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,14],y=1:5000)
+```
+
+
+#### Normality test for "ds.family.size": Fail Test
+  + Since p-value is less than 0.05, the distribution is not normal
+  
+```{r}
+ad.test(inputdf[,15])
+cvm.test(inputdf[,15])
+pearson.test(inputdf[,15])
+```
+
++ Bar/Density Plot:
+```{r}
+a <- ggplot(inputdf, aes(x = ds.family.size))
+a +  geom_bar(fill="steelblue",  width = 0.7, alpha=0.8) + theme_minimal()
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,15],y=1:5000)
+```
+
+#### Normality test for "ds.Children": Fail Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}
+ad.test(inputdf[,16])
+cvm.test(inputdf[,16])
+pearson.test(inputdf[,16])
+```
+
++ Bar/Density Plot:
+```{r}
+a <- ggplot(inputdf, aes(x = ds.Children))
+a +  geom_bar(fill="steelblue", width = 0.7, alpha=0.8) + theme_minimal()
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,16],y=1:5000)
+```
+
+#### Normality test for "ds.Avg.Family.Age": Fail Test
+ + Since p-value is less than 0.05, the distribution is not normal
+```{r}
+ad.test(inputdf[,17])
+cvm.test(inputdf[,17])
+pearson.test(inputdf[,17])
+```
+
+ + Density Plot: Check for Normal Distribution
+```{r}
+a <- ggplot(inputdf, aes(x = ds.Avg.Family.Age))
+a +  geom_density(fill="steelblue", alpha=0.8) + theme_minimal()
+```
+
++ QQ Plot: To check the normality distribution graphically 
+```{r}
+qqplot(x=inputdf[,17],y=1:5000)
+```
+
+#### Normality test for "ds.Annual.income": Pass Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}
+ad.test(inputdf[,18])
+cvm.test(inputdf[,18])
+pearson.test(inputdf[,18])
+```
+
++ Density Plot: Looks like Normal Distribution
+```{r}
+a <- ggplot(inputdf, aes(x = ds.Annual.income))
+a +  geom_density(fill="steelblue", alpha=0.8) + theme_minimal()
+```
+
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,18],y=1:5000)
+```
+
+#### Normality test for "ds.Avg.annual.inc": Pass Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}
+ad.test(inputdf[,19])
+cvm.test(inputdf[,19])
+pearson.test(inputdf[,19])
+```
+
+
+ + Density Plot: Check for Normal Distribution
+```{r}
+a <- ggplot(inputdf, aes(x = ds.Avg.annual.inc))
+a +  geom_density(fill="steelblue", alpha=0.8) + theme_minimal()
+```
+
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,19],y=1:5000)
+```
+
+#### Normality test for "ds.Annual.Expenses": Pass Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}
+ad.test(inputdf[,20])
+cvm.test(inputdf[,20])
+pearson.test(inputdf[,20])
+```
+
+
+ + Density Plot: Check for Normal Distribution
+```{r}
+a <- ggplot(inputdf, aes(x = ds.Annual.Expenses))
+a +  geom_density(fill="steelblue", alpha=0.8) + theme_minimal()
+```
+
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,20],y=1:5000)
+```
+
+
+#### Normality test for "ds.Saving.Amount": Pass Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}
+ad.test(inputdf[,21])
+cvm.test(inputdf[,21])
+pearson.test(inputdf[,21])
+```
+
+ + Density Plot: Check for Normal Distribution
+```{r}
+a <- ggplot(inputdf, aes(x = ds.Saving.Amount))
+a +  geom_density(fill="steelblue", alpha=0.8) + theme_minimal()
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,21],y=1:5000)
+```
+
+
+#### Normality test for "ds.Credit.Cards": Fail Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}
+ad.test(inputdf[,22])
+cvm.test(inputdf[,22])
+pearson.test(inputdf[,22])
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,22],y=1:5000)
+```
+
+#### Normality test for "ds.Two.Wheelers": Fail Test
+  + Since p-value is less than 0.05, the distribution is not normal
+  
+```{r}
+ad.test(inputdf[,23])
+cvm.test(inputdf[,23])
+pearson.test(inputdf[,23])
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,23],y=1:5000)
+```
+
+
+#### Normality test for "ds.Four.Wheelers": Fail Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}  
+ad.test(inputdf[,24])
+cvm.test(inputdf[,24])
+pearson.test(inputdf[,24])
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,24],y=1:5000)
+```
+
+
+#### Normality test for "ds.Bank.Accounts": Fail Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}  
+ad.test(inputdf[,25])
+cvm.test(inputdf[,25])
+pearson.test(inputdf[,25])
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,25],y=1:5000)
+```
+
+#### Normality test for "ds.Houses": Fail Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}  
+ad.test(inputdf[,26])
+cvm.test(inputdf[,26])
+pearson.test(inputdf[,26])
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,26],y=1:5000)
+```
+
+#### Normality test for "ds.Estates": Fail Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}  
+ad.test(inputdf[,27])
+cvm.test(inputdf[,27])
+pearson.test(inputdf[,27])
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,27],y=1:5000)
+```
+
+
+#### Normality test for "ds.Yearly.Travel.Dist.Air": Pass Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}  
+ad.test(inputdf[,28])
+cvm.test(inputdf[,28])
+pearson.test(inputdf[,28])
+```
+
+ + Density Plot: Check for Normal Distribution
+```{r}
+a <- ggplot(inputdf, aes(x = ds.Yearly.Travel.Dist.Air))
+a +  geom_density(fill="steelblue", alpha=0.8) + theme_minimal()
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,28],y=1:5000)
+```
+
+
+#### Normality test for "ds.Yearly.Travel.Dist.Road": Pass Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}  
+ad.test(inputdf[,29])
+cvm.test(inputdf[,29])
+pearson.test(inputdf[,29])
+```
+
+ + Density Plot: Check for Normal Distribution
+```{r}
+a <- ggplot(inputdf, aes(x = ds.Yearly.Travel.Dist.Road))
+a +  geom_density(fill="steelblue", alpha=0.8) + theme_minimal()
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,29],y=1:5000)
+```
+
+#### Normality test for "ds.Policy.Face.Value": Fail Test
+  + Since p-value is less than 0.05, the distribution is not normal
+  
+```{r}  
+ad.test(inputdf[,30])
+cvm.test(inputdf[,30])
+pearson.test(inputdf[,30])
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,30],y=1:5000)
+```
+
+
+#### Normality test for "ds.Claimed.Amount": Fail Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}  
+ad.test(inputdf[,31])
+cvm.test(inputdf[,31])
+pearson.test(inputdf[,31])
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,31],y=1:5000)
+```
+
+
+#### Normality test for "ds.Yearly.Premium": Pass Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}  
+ad.test(inputdf[,32])
+cvm.test(inputdf[,32])
+pearson.test(inputdf[,32])
+```
+
+ + Density Plot: Check for Normal Distribution
+```{r}
+a <- ggplot(inputdf, aes(x = ds.Yearly.Premium))
+a +  geom_density(fill="steelblue", alpha=0.8) + theme_minimal()
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,32],y=1:5000)
+```
+
+#### Normality test for "ds.YearOfPurchase.1st_Prod": Fail Test
+  + Since p-value is less than 0.05, the distribution is not normal
+  
+```{r}  
+ad.test(inputdf[,33])
+cvm.test(inputdf[,33])
+pearson.test(inputdf[,33])
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,33],y=1:5000)
+```
+
+
+#### Normality test for "ds.YearOfPurchase.LastProd": Fail Test
+  + Since p-value is less than 0.05, the distribution is not normal
+```{r}  
+ad.test(inputdf[,34])
+cvm.test(inputdf[,34])
+pearson.test(inputdf[,34])
+```
+
++ QQ Plot: To check the normality distribution graphically
+```{r}
+qqplot(x=inputdf[,34],y=1:5000)
+```
+
+## Step 3 - Analysis for Clustering:
+
+### K-Means Clustering
+
+#### Initially, lets pull all the numeric variable to build cluster. Variable not normally distributed will be of lesser important but just to experiment, we are considering. 
+```{r}
+prod_df <- inputdf[,13:34]
+prod_df <- na.omit(prod_df)
+```
+
+##### Test to calculate the optimal number of clusters
+```{r}
+kmean_withinss <- function(k) {
+  p_cluster <- kmeans(prod_df, k)
+  return (p_cluster$tot.withinss)
+}
+
+# Set maximum cluster 
+max_k <-20 
+# Run algorithm over a range of k 
+wss <- sapply(2:max_k, kmean_withinss)
+
+# Create a data frame to plot the graph
+elbow <-data.frame(2:max_k, wss)
+
+library(ggplot2)
+# Plot the graph with gglop
+ggplot(elbow, aes(x = X2.max_k, y = wss)) +
+  geom_point() +
+  geom_line() +
+  scale_x_continuous(breaks = seq(1, 20, by = 1))
+
+```
+
+##### Based on the above elbow, we can select K-Means clustering between 3-7 centers.
++ Trying with 5 centers
+```{r}
+p_cluster_2 <-kmeans(prod_df, centers = 5, nstart = 25)
+
+p_cluster_2$betweenss
+# Very large distance the centroids of the clusters in the final partition are from one another.
+```
+
++ Loading the required library for Cluster plot
+```{r}
+library(tidyverse)  # data manipulation
+library(cluster)    # clustering algorithms
+library(factoextra) # clustering algorithms & visualization
+```
+
++ Plotting the clusters: Dim1+Dim2 = 21.6%
+```{r}
+fviz_cluster(p_cluster_2, data = prod_df)
+
+```
+
++ Trying with 7 centers
+```{r}
+p_cluster_2a <-kmeans(prod_df, centers = 7, nstart = 25)
+
+p_cluster_2a$betweenss
+# Very large distance the centroids of the clusters in the final partition are from one another.
+```
+
++ Plotting the clusters: Dim1+Dim2 = 21.6% <No improvement>
+```{r}
+fviz_cluster(p_cluster_2a, data = prod_df)
+```
+
++ Lets try to scale the variable and plot the cluster
+```{r}
+sc_df <- scale(inputdf[, 13:34])
+
+# Plotting with 4 Centriod
+sc_cluster <- kmeans(sc_df,4)
+
+sc_cluster$betweenss
+```
+
+```{r}
+fviz_cluster(sc_cluster, data = sc_df)
+```
+
+```{r}
+# Plotting with 4 Centriod
+sc_cluster_2 <-kmeans(sc_df, centers = 3, nstart = 25)
+
+sc_cluster_2$betweenss
+```
+
+```{r}
+fviz_cluster(sc_cluster_2, data = sc_df)
+```
+
++ Loading the required library for Correlogram plot
+```{r}
+library(ggplot2)
+library(ggcorrplot)
+```
+
+```{r}
+# Correlation matrix
+corr <- round(cor(prod_df), 1)
+
+# Plotting Correlogram:
+ggcorrplot(corr, hc.order = TRUE, 
+           type = "lower", 
+           lab = TRUE, 
+           lab_size = 3, 
+           method="circle", 
+           colors = c("tomato2", "white", "springgreen3"), 
+           title="Correlogram of numeric variables", 
+           ggtheme=theme_bw)
+```
+
++ ds.YearOfPurchase.1st_Prod(21) ds.YearOfPurchase.LastProd(22) - Having high correlation, can select 1 of the 2
++ ds.Annual.Expenses(8) ds.Yearly.Premium(20) ds.Annual.income(6) - Having high correlation, can select 1 of the 3
+
+```{r echo=FALSE}
+library(Hmisc)
+library(REdaS)
+library(ppcor)
+library(psych)
+library(psy)
+```
+
+
+```{r}
+colnames(prod_df)
+
+```
+
+### Principal Component Analysis
+#### Identify variables with more variance and perform clustering
+```{r}
+pca_out2 <- principal(sc_df[,c(1:22)],nf=4,rotate='varimax') 
+
+varimax_pca2 <- pca_out2$loadings[1:22,]
+apply(varimax_pca2,1,function(x) sum(x*x)) #Communalities
+```
+
+```{r}
+varimax_pca2 <- ifelse(abs(varimax_pca2)>0.4,varimax_pca2,NA)  #disregarding loadings where abs <0.4
+varimax_pca2 <- as.data.frame(round(varimax_pca2,3))
+varimax_pca2[order(-varimax_pca2$RC1,-varimax_pca2$RC2,-varimax_pca2$RC3,-varimax_pca2$RC4),]
+```
+
+```{r}
+colnames(sc_df)
+```
+
++ Clustering - Selecting all the variable with high variance in the RC1-4. But randomly select centriod = 4.
+```{r}
+sc_df0 <- sc_df[,c(1,2,3,4,5,6,8,9,20,21,22)]
+
+sc_cluster0 <- kmeans(sc_df0,4)
+
+sc_cluster0$betweenss
+```
+
++ With centriod = 4. Improvement Achieved Dim1+Dim2 = 43%
+```{r}
+fviz_cluster(sc_cluster0, data = sc_df0)
+```
+
++ Lets get the elbow for better estimate
+```{r}
+kmean_withinss <- function(k) {
+  p_cluster0 <- kmeans(sc_df0, k)
+  return (p_cluster0$tot.withinss)
+}
+
+# Set maximum cluster 
+max_k0 <-20 
+# Run algorithm over a range of k 
+wss0 <- sapply(2:max_k0, kmean_withinss)
+
+
+# Create a data frame to plot the graph
+elbow0 <-data.frame(2:max_k0, wss0)
+```
+
+```{r}
+library(ggplot2)
+
+# Plot the graph with gglop
+ggplot(elbow0, aes(x = X2.max_k0, y = wss0)) +
+  geom_point() +
+  geom_line() +
+  scale_x_continuous(breaks = seq(1, 20, by = 1))
+```
+
++ With centriod = 7. 
+```{r}
+sc_cluster_0 <-kmeans(sc_df0, centers = 7, nstart = 25)
+```
+```{r}
+sc_cluster_0$betweenss
+```
+
++ Improvement Achieved Dim1+Dim2 = 43%
+```{r}
+fviz_cluster(sc_cluster_0, data = sc_df0)
+```
+
++ With centriod = 4
+
+##### We are selecting 4 parameters with maximum variance from the 4 RCs
+```{r}
+sc_df1 <- sc_df[,c(1,4,8,21)]
+
+sc_cluster1 <- kmeans(sc_df1,4) # Randomly putting 4
+
+sc_cluster1$size
+```
+
+
++ Proportion of customers on each clusters
+```{r}
+
+sc_cluster1$size/5000*100
+```
+
++ Distance between SS
+```{r}
+sc_cluster1$betweenss
+```
+
++ Improvement Achieved Dim1+Dim2 = 58.6%
+```{r}
+fviz_cluster(sc_cluster1, data = sc_df1)
+
+```
+
++ Lets get the elbow for better estimate
+```{r}
+kmean_withinss <- function(k) {
+  p_cluster1 <- kmeans(sc_df1, k)
+  return (p_cluster1$tot.withinss)
+}
+
+# Set maximum cluster 
+max_k1 <-20 
+# Run algorithm over a range of k 
+wss1 <- sapply(2:max_k1, kmean_withinss)
+
+
+# Create a data frame to plot the graph
+elbow <-data.frame(2:max_k1, wss1)
+
+
+library(ggplot2)
+
+# Plot the graph with gglop
+ggplot(elbow, aes(x = X2.max_k1, y = wss1)) +
+  geom_point() +
+  geom_line() +
+  scale_x_continuous(breaks = seq(1, 20, by = 1))
+```
+
+
++ With centriod = 5
+```{r}
+sc_cluster_3 <-kmeans(sc_df1, centers = 5, nstart = 25)
+```
+
++ Distance between SS
+```{r}
+sc_cluster_3$betweenss
+```
+
+
+```{r}
+fviz_cluster(sc_cluster_3, data = sc_df1)
+```
+
+
++ With centriod = 3
+```{r}
+sc_cluster_4 <-kmeans(sc_df1, centers = 3, nstart = 25)
+
+sc_cluster_4$size
+```
+
++ Distance between SS
+```{r}
+sc_cluster_4$betweenss
+```
+
+```{r}
+
+sc_cluster_4$size/5000*100
+```
+
+```{r}
+fviz_cluster(sc_cluster_4, data = sc_df1)
+```
+
+
+```{r}
+sc_cluster_5 <-kmeans(sc_df1, centers = 2, nstart = 25)
+
+sc_cluster_5$size
+```
+
+
++ Proportion of customers on each clusters
+Not that uniformly distributed. So, lets proceed with 3 clusters.
+```{r}
+sc_cluster_5$size/5000*100
+```
+
+```{r}
+sc_cluster_5$betweenss
+```
+
+
+```{r}
+fviz_cluster(sc_cluster_5, data = sc_df1)
+```
+
+### Based on all the clusters with different numbers of centriods. Here, my recommendation shall be 3-4 based on the data.
+
++ I am proceeding my analysis with 3 clusters
+
+```{r}
+sc_df_final3 <- data.frame(inputdf[,1:44],sc_cluster_4$cluster)
+```
+
+##### Grouping customer based on the number of the product they bought
+```{r}
+library(dplyr)
+cluster3_1 = sc_df_final3 %>% 
+      filter(sc_df_final3$sc_cluster_4.cluster == "1")
+
+ftable(apply(cluster3_1[,35:44], 1, sum))
+```
+
+
+```{r}
+x1 = ftable(apply(cluster3_1[,35:44], 1, sum))
+x1 = as.data.frame(x1)
+plot(x1, type = "h")
+```
+
+#### From the above plot we can understand that there are lot of customer who has bought 5-7 products. So, there is a good tendency to buy 5-7 products. So, we can identify customer who has bought 3-4 products and try to promote some popular products to the customer.
+
+##### Identifying the popular products within the cluster, having better market share.
+```{r}
+
+pp1 = apply(cluster3_1[,35:44], 2, sum)
+
+pp1 = as.data.frame(pp1)
+plot(pp1$pp1, type = "h")
+
+```
+
+##### Checking if we can identify any trend of buying product based on the customer age
+###### Cluster 1 - Having customers with more age compare to the Cluster 2 & 3
+###### Customers using 4 products are generally aged below 55. So, those who are in the age band 55-60 can buy some more products.
+```{r}
+cluster3_1_r = cbind(cluster3_1, row.sums_1 = apply(cluster3_1[,35:44], 1, sum))
+
+fit_clus3_1 = lm(row.sums_1 ~ ds.age,data = cluster3_1_r)
+
+plot.ts(cluster3_1_r$ds.age,cluster3_1_r$row.sums_1)
+  abline(fit_clus3_1,col = "red")
+```
+
+##### Grouping customer based on the number of the product they bought
+```{r}
+cluster3_2 = sc_df_final3 %>% 
+         filter(sc_df_final3$sc_cluster_4.cluster == "2")
+ftable(apply(cluster3_2[,35:44], 1, sum))
+```
+
+##### Nos. of customers buying nos. of products
+```{r}
+x2 = ftable(apply(cluster3_2[,35:44], 1, sum))
+x2 = as.data.frame(x2)
+plot(x2, type = "h", title = "Frequency distribution of customers with nos of products")
+```
+
+#### From the above plot we can understand that there are lot of customer who has bought 5-7 products. So, there is a good tendency to buy 5-7 products. So, we can identify customer who has bought 3-5 products and try to promote some popular products to the customer.
+
+##### Identifying the popular products within the cluster
+```{r}
+
+pp2 = apply(cluster3_2[,35:44], 2, sum)
+
+pp2 = as.data.frame(pp2)
+plot(pp2$pp2, type = "h")
+
+```
+
+##### Checking if we can identify any trend of buying product based on the customer age
+```{r}
+cluster3_2_r = cbind(cluster3_2, row.sums_2 = apply(cluster3_2[,35:44], 1, sum))
+
+fit_clus3_2 = lm(row.sums_2 ~ ds.age,data = cluster3_2_r)
+
+plot.ts(cluster3_2_r$ds.age,cluster3_2_r$row.sums_2)
+  abline(fit_clus3_2,col = "red")
+```
+
+
+
+##### Grouping customer based on the number of the product they bought
+```{r}
+cluster3_3 = sc_df_final3 %>% 
+         filter(sc_df_final3$sc_cluster_4.cluster == "3")
+
+ftable(apply(cluster3_3[,35:44], 1, sum))
+```
+
+
+##### Nos. of customers buying nos. of products
+```{r}
+x3 = ftable(apply(cluster3_3[,35:44], 1, sum))
+x3 = as.data.frame(x3)
+plot(x3, type = "h")
+```
+
+#### From the above plot we can understand that there are lot of customer who has bought 5-7 products. So, there is a good tendency to buy 5-7 products. So, we can identify customer who has bought 3-5 products and try to promote some popular products to the customer.
+
+##### Identifying the popular products within the cluster
+```{r}
+
+pp3 = apply(cluster3_3[,35:44], 2, sum)
+
+pp3 = as.data.frame(pp3)
+plot(pp3$pp3, type = "h")
+
+```
+
+##### Checking if we can identify any trend of buying product based on the customer age
+```{r}
+cluster3_3_r = cbind(cluster3_3, row.sums_3 = apply(cluster3_3[,35:44], 1, sum))
+
+fit_clus3_3 = lm(row.sums_3 ~ ds.age,data = cluster3_3_r)
+
+plot.ts(cluster3_3_r$ds.age,cluster3_3_r$row.sums_3)
+  abline(fit_clus3_3,col = "red")
+```
+
+##### Cluster with age
+```{r}
+plot.ts(sc_df_final3$ds.age,sc_df_final3$sc_cluster_4.cluster)
+```
+
+##### Cluster 1 is having customer with children more than 2
+```{r}
+plot.ts(sc_df_final3$ds.Children,sc_df_final3$sc_cluster_4.cluster)
+```
+
+##### Customer belongs to Cluster 3 has bought 1st Product very recently. Customer belongs to Cluster 2 has bought 1st Product long back. Customer belongs to Cluster 1 has bought 1st Product for longer span.
+
+```{r}
+plot(sc_df_final3$ds.YearOfPurchase.1st_Prod,sc_df_final3$sc_cluster_4.cluster)
+```
+
+##### Checking if Policy.Face.Value is having relation with cluster. No relation.
+```{r}
+plot(sc_df_final3$ds.Policy.Face.Value,sc_df_final3$sc_cluster_4.cluster)
+```
+
+##### Checking Yearly.Premium if any relation with clusters. No differenciating relations.
+```{r}
+plot(sc_df_final3$ds.Yearly.Premium,sc_df_final3$sc_cluster_4.cluster)
+```
+
+#### Let us use Apriori algorithm, to check if the products are having any rules, and based on it if we can find out some hidden secrets, that is not visible to us till now.
+
+```{r echo=FALSE}
+library(arules)
+```
+
+
+##### Converting to transactions to come up with rules. Let us assume that each customer and their product selection is part of a transaction.
+```{r}
+
+for (i in 35:44){
+  sc_df_final3[,i] = as.factor(sc_df_final3[,i])
+}
+
+prod_transaction = as(sc_df_final3[,35:44], "transactions")
+apriori(data = prod_transaction, parameter = NULL)
+```
+
+
+```{r}
+rules <- apriori(prod_transaction, 
+	parameter = list(supp = 0.5, conf = 0.9, target = "rules"))
+summary(rules)
+```
+
+##### Inspecting top 20 rules.
+```{r}
+inspect(rules[1:20])
+```
+
+##### Library for graphical representation
+```{r}
+library(arulesViz)
+```
+
+##### Checking relative frequency distribution
+```{r}
+arules::itemFrequencyPlot(prod_transaction,topN=20,col="steelblue",main='Relative Product Frequency Plot',type="relative",ylab="Item Frequency (Relative)")
+
+```
+
+```{r}
+plot(rules[1:20],method = "graph")
+```
+
+
+## Conlcusion:
+
+#### Based on the analysis it seems that, we can consider 3 clusters for equal distribution of population amoung the 3 cluster for business operation. Age, Children are some of the more distinguishing factors. We can see that till a certain age customer keep buying insurance products and count of products they avail can reached to even 9 products. But high tendency on the customers to buy product at the range of 6-8. So based on the recommendation, we can suggest mid age customer age 30-45 to buy products if they are less than 6 products in their portfolio. Products 1, 4, 9 & 10 are the most popular products across all the clusters. So when we refer the dictionary or variable details we see that __Product 1 - Children Plan__, __Product 4 - Bike Insurance Plan__,  __Product 9 - Health Insurance Plan__, __Product 10 - Retirement Insurance Plan__ are the popular product and it really make sense that across various cluster, these insurance products are very much needed. We can understand that insurance are the product that are purchased for long term goal and they are maintain. In case of very senior customer, we see that need or benefit received from insurance are predominating. We also observe that income and expenses are based on the time one is earning and lesser impact due to age. Since, experience might get more or the price might be higher for the aged professionals but younger generation are energatic to earn a similar share. We also see that age between 20-30 has lesser insurance product, seems that at initial phase they are interested to fullfil their dezired and then they feel to secure the future. We also see some products are not that preferred products. It needs further research and Product R&D team need to build new Product so that market share for the product can be increase. 
+
+This study will differ on case by case depending on the data but will throw some insight on the society and direction to the business to gain profit to recommend products where there might be some need in near future.
+
+Note: Since as part of this project, we perform algorithm like K Means Clustering, Apriori and Bayesian network; I have not split data into test and train.
